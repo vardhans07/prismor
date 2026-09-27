@@ -782,7 +782,7 @@ def fetch(ttl: float = DEFAULT_TTL_SECONDS, force: bool = False) -> bool:
 
     try:
         from prismor.runtime.cloaking_patterns import write_org_patterns
-        write_org_patterns(_extract_cloak_patterns(policy_yaml))
+        write_org_patterns(_extract_cloak_patterns(policy_yaml)
     except Exception as exc:
         sys.stderr.write(f"[prismor] could not apply org cloak patterns: {exc}\n")
 

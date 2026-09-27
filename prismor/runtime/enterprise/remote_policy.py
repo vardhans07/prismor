@@ -621,16 +621,38 @@ def _verify_signature(payload: bytes, sig_b64: str) -> bool:
 
 def verify_and_load() -> Optional[Dict[str, Any]]:
     """Load and verify the cached remote policy. Returns the parsed policy dict
-    (with a ``_remote_meta`` key) or None if absent / unverifiable.
+    (with a "_remote_meta" key) or None if absent / unverifiable.
 
-    Called by the PolicyEngine on every load — must be cheap and never raise.
+    Called by the PolicyEngine on every load - must be cheap and never raise.
     """
     if _identity.revoked_info():
         return None
     policy_path = cached_policy_path()
-    sig_path = _cached_sig_path()
+    sig_path = cached_sig_path()
     if not policy_path.exists() or not sig_path.exists():
         return None
+
+    try:
+        pol_stat = policy_path.stat()
+        sig_stat = sig_path.stat()
+        cache_key = (
+            str(policy_path),
+            str(sig_path),
+            pol_stat.st_ino,
+            pol_stat.st_ctime_ns,
+            pol_stat.st_mtime_ns,
+            pol_stat.st_size,
+            sig_stat.st_ino,
+            sig_stat.st_ctime_ns,
+            sig_stat.st_mtime_ns,
+            sig_stat.st_size,
+        )
+    except OSError:
+        return None
+
+    if cache_key in _VERIFIED_POLICY_MEMO:
+        return copy.deepcopy(_VERIFIED_POLICY_MEMO[cache_key])
+
     try:
         payload = policy_path.read_bytes()
         sig_b64 = sig_path.read_text(encoding="utf-8").strip()
@@ -638,7 +660,7 @@ def verify_and_load() -> Optional[Dict[str, Any]]:
         return None
 
     if not _verify_signature(payload, sig_b64):
-        sys.stderr.write("[prismor] remote policy signature INVALID — ignoring\n")
+        sys.stderr.write("[prismor] remote policy signature INVALID - ignoring\n")
         return None
 
     try:
@@ -655,7 +677,11 @@ def verify_and_load() -> Optional[Dict[str, Any]]:
     except (OSError, ValueError):
         pass
     parsed["_remote_meta"] = meta
-    return parsed
+
+    _VERIFIED_POLICY_MEMO.clear()
+    _VERIFIED_POLICY_MEMO[cache_key] = parsed
+    return copy.deepcopy(parsed)
+
 
 
 def _cache_is_fresh(ttl: float) -> bool:
@@ -753,11 +779,13 @@ def fetch(ttl: float = DEFAULT_TTL_SECONDS, force: bool = False) -> bool:
     # The cloak hooks are bash and read pattern files, not this YAML: project
     # the org's secret patterns to a file they load. Verified policy only -
     # this runs after the signature check above. Best-effort, never fatal.
+
     try:
-        from prismor.runtime.cloaking.patterns import write_org_patterns
+        from prismor.runtime.cloaking_patterns import write_org_patterns
         write_org_patterns(_extract_cloak_patterns(policy_yaml))
     except Exception as exc:
         sys.stderr.write(f"[prismor] could not apply org cloak patterns: {exc}\n")
+
     _meta_path().write_text(json.dumps({
         "fetched_at": time.time(),
         "version": body.get("version"),
@@ -765,6 +793,7 @@ def fetch(ttl: float = DEFAULT_TTL_SECONDS, force: bool = False) -> bool:
         "scope": body.get("scope"),
         "full_capture": full_capture,
     }), encoding="utf-8")
+    clear_policy_cache()
     return True
 
 
